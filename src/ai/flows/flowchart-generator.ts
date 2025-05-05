@@ -80,10 +80,14 @@ const prompt = ai.definePrompt({
   API Request Parameters: {{{apiRequestParameters}}}
   Backend Database Connection: {{{backendDatabaseConnection}}}
 
-  The flowchart definition should be in Mermaid format.
-  Ensure that the flowchart accurately reflects the technical steps and data flow involved in implementing the user flow.
-  Start the flowchart definition with "flowchart TD" so that it can be rendered correctly by a Mermaid renderer.
-  Do not include any explanation or introductory text before or after the Mermaid flowchart definition.
+  Instructions for Mermaid Flowchart Definition:
+  1.  The flowchart definition MUST be in valid Mermaid flowchart syntax.
+  2.  Start the definition with "flowchart TD" for a top-down direction.
+  3.  Define nodes using standard shapes like rectangles 'ID[Text]', rounded rectangles 'ID(Text)', or diamonds 'ID{Text}'. Avoid using unsupported or custom node shapes.
+  4.  Use standard connectors like '-->' for arrows with text, '---' for lines, or '-- Text ---' for lines with text.
+  5.  Ensure all node IDs are unique and valid (alphanumeric, no special characters other than underscores).
+  6.  Accurately reflect the technical steps and data flow involved in implementing the user flow based on the provided details.
+  7.  Do NOT include any explanation, introductory text, markdown formatting (like \`\`\`), or comments before or after the Mermaid flowchart definition itself. Only output the raw Mermaid code starting with 'flowchart TD'.
   `,
 });
 
@@ -98,6 +102,11 @@ const generateFlowchartFlow = ai.defineFlow<
   },
   async input => {
     const {output} = await prompt(input);
+    // Basic check to ensure the output starts correctly
+    if (output?.flowchartDefinition && !output.flowchartDefinition.trim().startsWith('flowchart TD')) {
+        // Prepend if missing, trying to recover
+        output.flowchartDefinition = 'flowchart TD\n' + output.flowchartDefinition.trim();
+    }
     return output!;
   }
 );

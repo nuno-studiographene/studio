@@ -58,7 +58,8 @@ const flowchartPrompt = ai.definePrompt({
     - If critical information is missing, respond with \`type: 'question'\` and the clarifying question in the \`content\` field.
     - Once you are confident you have gathered *all* necessary details (including user flow, fetching method, loading state, API details if applicable, backend/DB info), STOP asking questions.
     - Generate the final flowchart definition in valid Mermaid syntax. The definition MUST start with \`flowchart TD\`.
-    - Respond with \`type: 'flowchart'\` and the complete, valid Mermaid flowchart definition in the \`content\` field. Ensure the Mermaid syntax is correct and follows best practices (clear node IDs, concise labels, standard shapes like [], (), {}). Do NOT include any explanations or markdown fences (like \`\`\`) around the Mermaid code in the final flowchart output.
+    - **IMPORTANT: Ensure node labels are concise and enclosed in appropriate brackets (e.g., \`A[Descriptive Label]\`, \`B(Decision Point)\`). Avoid using complex punctuation like commas, parentheses, or special characters *inside* the labels themselves, as this can break the flowchart rendering. Use simple descriptions within the labels.**
+    - Respond with \`type: 'flowchart'\` and the complete, valid Mermaid flowchart definition in the \`content\` field. Ensure the entire output is valid Mermaid syntax and follows best practices (clear node IDs, concise labels, standard shapes). Do NOT include any explanations or markdown fences (like \`\`\`) around the Mermaid code in the final flowchart output.
 
     **Example Interaction:**
     User: "Show related products on the product page."
@@ -66,7 +67,7 @@ const flowchartPrompt = ai.definePrompt({
     User: "It uses an API call."
     Assistant (output): \`{ type: 'question', content: 'Got it. What is the endpoint URL for the related products API, and is it a GET or POST request?' }\`
     ... (continue until all info is gathered) ...
-    Assistant (final output): \`{ type: 'flowchart', content: 'flowchart TD\\nA[User visits Product Page] --> B(Frontend makes GET request to /api/products/{id}/related);\\nB --> C{Show Loading Skeleton};\\nC --> D[API Gateway];\\n...' }\`
+    Assistant (final output): \`{ type: 'flowchart', content: 'flowchart TD\\nA[User visits Product Page] --> B(Frontend makes GET request to /api/products/id/related);\\nB --> C{Show Loading Skeleton};\\nC --> D[API Gateway];\\nD --> E[Backend Service Fetches Data];\\nE --> F((Database Query));\\nF --> E;\\nE --> G[API Gateway Returns Data];\\nG --> H(Frontend receives data);\\nH --> I[Update UI with Related Products];\\nC --> H;' }\`
 
     **Current Conversation:**
     {{#each messages}}
@@ -116,10 +117,29 @@ const conversationalFlowchartFlow = ai.defineFlow<
                     return { type: 'error', content: 'I seem to have trouble generating the flowchart structure correctly. Could you perhaps rephrase the last piece of information?' };
                  }
             }
-             // TODO: Add more robust Mermaid syntax validation here if possible,
-             // although complex validation is hard without a full parser.
-             // For now, we rely on the LLM adhering to instructions.
+             // Mermaid can be strict about labels. While the prompt guides the LLM,
+             // we can add a basic sanitizer here as a fallback for common issues,
+             // like extra quotes or complex chars inside labels that the LLM might still generate.
+             // This is a simple example; more robust parsing/sanitizing is complex.
+             // Example: Replace potentially problematic characters inside labels []
+             definition = definition.replace(/\[(.*?)\]/g, (match, label) => {
+                // Remove internal quotes, parentheses, commas for simplicity
+                const sanitizedLabel = label.replace(/["'(),]/g, '');
+                return `[${sanitizedLabel}]`;
+             });
+              // Example: Do the same for other bracket types if needed, e.g., () {}
+             definition = definition.replace(/\((.*?)\)/g, (match, label) => {
+                const sanitizedLabel = label.replace(/["'(),]/g, '');
+                return `(${sanitizedLabel})`;
+             });
+              definition = definition.replace(/\{(.*?)\}/g, (match, label) => {
+                const sanitizedLabel = label.replace(/["'(),]/g, '');
+                return `{${sanitizedLabel}}`;
+             });
+
+
             output.content = definition;
+            console.log('Cleaned Flowchart Definition:', definition);
         }
 
         return output;

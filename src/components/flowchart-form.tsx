@@ -1,310 +1,210 @@
+
 "use client";
 
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm, Controller } from "react-hook-form";
-import { z } from "zod";
-import { useState, useEffect, useRef } from "react";
-import { Loader2 } from "lucide-react";
-import { generateFlowchart, FlowchartGeneratorInput, FlowchartGeneratorOutput } from "@/ai/flows/flowchart-generator";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Loader2, Bot, User, Send } from "lucide-react";
+import { converseAndGenerateFlowchart, ConversationInput, ConversationOutput, Message } from "@/ai/flows/conversational-flowchart-flow";
 import { Button } from "@/components/ui/button";
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { MermaidChart } from "./mermaid-chart";
-
-const formSchema = z.object({
-  userFlowDescription: z.string().min(10, "Please provide a more detailed flow description."),
-  apiOrServerSide: z.enum(["api", "ssr"]),
-  loadersOrSkeletons: z.enum(["loaders", "skeletons", "none"]),
-  apiRequestParameters: z.string().optional(),
-  backendDatabaseConnection: z.string().min(5, "Please describe the database connection."),
-});
-
-type FormValues = z.infer<typeof formSchema>;
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { cn } from "@/lib/utils";
 
 export function FlowchartForm() {
-  const [currentStep, setCurrentStep] = useState(1);
-  const [flowchartData, setFlowchartData] = useState<FlowchartGeneratorOutput | null>(null);
+  const [conversation, setConversation] = useState<Message[]>([]);
+  const [userInput, setUserInput] = useState("");
+  const [flowchartDefinition, setFlowchartDefinition] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isComplete, setIsComplete] = useState(false);
   const { toast } = useToast();
   const flowchartRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      userFlowDescription: "",
-      apiOrServerSide: "api",
-      loadersOrSkeletons: "skeletons",
-      apiRequestParameters: "",
-      backendDatabaseConnection: "",
-    },
-  });
+   // Add initial assistant message
+  useEffect(() => {
+    setConversation([{ role: 'assistant', content: "Hello! Describe the user flow you'd like me to turn into a technical flowchart." }]);
+  }, []);
 
-  const watchApiOrServerSide = form.watch("apiOrServerSide");
 
-  const totalSteps = 5; // Adjust based on the number of distinct questions/steps
-
-  const nextStep = async () => {
-    const fieldsToValidate: (keyof FormValues)[] = [];
-    if (currentStep === 1) fieldsToValidate.push("userFlowDescription");
-    if (currentStep === 2) fieldsToValidate.push("apiOrServerSide");
-    if (currentStep === 3) fieldsToValidate.push("loadersOrSkeletons");
-    if (currentStep === 4 && watchApiOrServerSide === 'api') fieldsToValidate.push("apiRequestParameters");
-    if (currentStep === 5) fieldsToValidate.push("backendDatabaseConnection");
-
-    const isValid = await form.trigger(fieldsToValidate);
-    if (isValid) {
-      if (currentStep < totalSteps) {
-        // Skip API parameters step if SSR is selected
-        if (currentStep === 2 && form.getValues("apiOrServerSide") === "ssr") {
-            setCurrentStep(currentStep + 2); // Skip to step 4 (loaders/skeletons)
-        } else {
-             setCurrentStep(currentStep + 1);
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => {
+        const scrollViewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]');
+        if (scrollViewport) {
+            scrollViewport.scrollTop = scrollViewport.scrollHeight;
         }
-      } else {
-        onSubmit(form.getValues());
-      }
-    }
-  };
+    }, 0); // Delay slightly to ensure DOM updates
+  }, []);
 
-   const prevStep = () => {
-    if (currentStep > 1) {
-        // If coming back from step 4 and SSR was selected, skip back to step 2
-        if (currentStep === 4 && form.getValues("apiOrServerSide") === "ssr") {
-            setCurrentStep(currentStep - 2);
-        } else {
-            setCurrentStep(currentStep - 1);
-        }
-    }
-  };
 
-  async function onSubmit(values: FormValues) {
-    setIsLoading(true);
-    setFlowchartData(null); // Clear previous flowchart
-    try {
-      const input: FlowchartGeneratorInput = {
-        ...values,
-        apiRequestParameters: values.apiOrServerSide === 'api' ? values.apiRequestParameters || 'N/A' : 'N/A',
-      };
-      const result = await generateFlowchart(input);
-      setFlowchartData(result);
-      toast({
-        title: "Flowchart Generated!",
-        description: "Your technical flowchart is ready.",
-      });
-      // Scroll to the flowchart after a short delay to allow rendering
+  useEffect(() => {
+    scrollToBottom();
+  }, [conversation, scrollToBottom]);
+
+   useEffect(() => {
+    if (flowchartDefinition) {
       setTimeout(() => {
-        flowchartRef.current?.scrollIntoView({ behavior: 'smooth' });
+        flowchartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 100);
+    }
+  }, [flowchartDefinition]);
+
+  const handleSendMessage = async (event?: React.FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    const trimmedInput = userInput.trim();
+    if (!trimmedInput || isLoading || isComplete) return;
+
+    const newUserMessage: Message = { role: "user", content: trimmedInput };
+    setConversation((prev) => [...prev, newUserMessage]);
+    setUserInput("");
+    setIsLoading(true);
+
+    try {
+      const input: ConversationInput = { messages: [...conversation, newUserMessage] };
+      const result: ConversationOutput = await converseAndGenerateFlowchart(input);
+
+      if (result.type === 'question') {
+        const assistantMessage: Message = { role: "assistant", content: result.content };
+        setConversation((prev) => [...prev, assistantMessage]);
+      } else if (result.type === 'flowchart') {
+         const assistantMessage: Message = { role: "assistant", content: "Great! I have enough information. Here is the generated flowchart:" };
+         setConversation((prev) => [...prev, assistantMessage]);
+         setFlowchartDefinition(result.content);
+         setIsComplete(true); // Mark conversation as complete
+         toast({
+            title: "Flowchart Generated!",
+            description: "Your technical flowchart is ready below.",
+         });
+      } else if (result.type === 'error') {
+         const errorMessage: Message = { role: "assistant", content: `Sorry, I encountered an error: ${result.content}` };
+         setConversation((prev) => [...prev, errorMessage]);
+         toast({
+            title: "Error",
+            description: result.content || "An unexpected error occurred.",
+            variant: "destructive",
+         });
+      }
+
     } catch (error) {
-      console.error("Error generating flowchart:", error);
+      console.error("Error in conversation:", error);
+      const errorMessage: Message = { role: "assistant", content: "Sorry, I ran into a problem processing that. Could you try rephrasing?" };
+      setConversation((prev) => [...prev, errorMessage]);
       toast({
         title: "Error",
-        description: "Failed to generate flowchart. Please try again.",
+        description: "Failed to get response from AI. Please try again.",
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
-  }
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      handleSendMessage();
+    }
+  };
 
   return (
-    <div className="space-y-8">
-      <Card className="bg-card shadow-lg rounded-lg">
-        <CardHeader>
-          <CardTitle className="text-xl font-semibold text-primary">Create Your Technical Flowchart</CardTitle>
+    <div className="space-y-8 flex flex-col h-[calc(100vh-200px)]">
+      <Card className="flex-grow flex flex-col bg-card shadow-lg rounded-lg overflow-hidden">
+        <CardHeader className="border-b">
+          <CardTitle className="text-xl font-semibold text-primary flex items-center gap-2">
+            <Bot /> Chat with FlowGenius AI
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              {currentStep === 1 && (
-                <FormField
-                  control={form.control}
-                  name="userFlowDescription"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-lg font-medium">Describe the User Flow</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="e.g., User lands on the product page, scrolls down, and sees related products."
-                          className="min-h-[100px]"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Provide a clear description of the user interaction from their perspective.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
+        <CardContent className="flex-grow p-0 overflow-hidden">
+          <ScrollArea className="h-full" ref={scrollAreaRef}>
+            <div className="p-4 space-y-4">
+                {conversation.map((message, index) => (
+                <div
+                    key={index}
+                    className={cn(
+                    "flex items-start gap-3",
+                    message.role === "user" ? "justify-end" : "justify-start"
+                    )}
+                >
+                    {message.role === "assistant" && (
+                    <Avatar className="h-8 w-8 border">
+                        <AvatarFallback><Bot size={16} /></AvatarFallback>
+                    </Avatar>
+                    )}
+                    <div
+                    className={cn(
+                        "max-w-[75%] rounded-lg p-3 text-sm shadow-sm",
+                        message.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted"
+                    )}
+                    >
+                     {/* Basic markdown link support - replace [text](url) with <a> tag */}
+                     {message.content.split(/(\[.*?\]\(.*?\))/g).map((part, i) => {
+                        const match = part.match(/\[(.*?)\]\((.*?)\)/);
+                        if (match) {
+                            return <a key={i} href={match[2]} target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-400">{match[1]}</a>;
+                        }
+                        // Simple code block/inline code detection
+                        if (part.startsWith('`') && part.endsWith('`')) {
+                             return <code key={i} className="bg-gray-200 dark:bg-gray-700 px-1 rounded text-xs">{part.slice(1, -1)}</code>;
+                        }
+                        return part;
+                     })}
+                    </div>
+                    {message.role === "user" && (
+                    <Avatar className="h-8 w-8 border">
+                        <AvatarFallback><User size={16} /></AvatarFallback>
+                    </Avatar>
+                    )}
+                </div>
+                ))}
+                {isLoading && (
+                <div className="flex items-start gap-3 justify-start">
+                    <Avatar className="h-8 w-8 border">
+                    <AvatarFallback><Bot size={16} /></AvatarFallback>
+                    </Avatar>
+                    <div className="bg-muted rounded-lg p-3 text-sm shadow-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    </div>
+                </div>
+                )}
+            </div>
 
-              {currentStep === 2 && (
-                <FormField
-                  control={form.control}
-                  name="apiOrServerSide"
-                  render={({ field }) => (
-                    <FormItem className="space-y-3">
-                      <FormLabel className="text-lg font-medium">How is data fetched?</FormLabel>
-                      <FormControl>
-                        <RadioGroup
-                          onValueChange={field.onChange}
-                          defaultValue={field.value}
-                          className="flex flex-col space-y-1"
-                        >
-                          <FormItem className="flex items-center space-x-3 space-y-0">
-                            <FormControl>
-                              <RadioGroupItem value="api" />
-                            </FormControl>
-                            <FormLabel className="font-normal">Via an API call from the frontend</FormLabel>
-                          </FormItem>
-                          <FormItem className="flex items-center space-x-3 space-y-0">
-                            <FormControl>
-                              <RadioGroupItem value="ssr" />
-                            </FormControl>
-                            <FormLabel className="font-normal">Through Server-Side Rendering (SSR)</FormLabel>
-                          </FormItem>
-                        </RadioGroup>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              {currentStep === 3 && (
-                 <FormField
-                  control={form.control}
-                  name="loadersOrSkeletons"
-                  render={({ field }) => (
-                    <FormItem className="space-y-3">
-                      <FormLabel className="text-lg font-medium">What loading indicators are used?</FormLabel>
-                      <FormControl>
-                        <RadioGroup
-                          onValueChange={field.onChange}
-                          defaultValue={field.value}
-                          className="flex flex-col space-y-1"
-                        >
-                          <FormItem className="flex items-center space-x-3 space-y-0">
-                            <FormControl>
-                              <RadioGroupItem value="loaders" />
-                            </FormControl>
-                            <FormLabel className="font-normal">Loaders (e.g., spinners)</FormLabel>
-                          </FormItem>
-                          <FormItem className="flex items-center space-x-3 space-y-0">
-                            <FormControl>
-                              <RadioGroupItem value="skeletons" />
-                            </FormControl>
-                            <FormLabel className="font-normal">Skeletons (placeholder layouts)</FormLabel>
-                          </FormItem>
-                           <FormItem className="flex items-center space-x-3 space-y-0">
-                            <FormControl>
-                              <RadioGroupItem value="none" />
-                            </FormControl>
-                            <FormLabel className="font-normal">None</FormLabel>
-                          </FormItem>
-                        </RadioGroup>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-             {currentStep === 4 && watchApiOrServerSide === 'api' && (
-                <FormField
-                  control={form.control}
-                  name="apiRequestParameters"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-lg font-medium">API Request Parameters</FormLabel>
-                      <FormControl>
-                        <Input placeholder="e.g., product ID, category, user token" {...field} />
-                      </FormControl>
-                      <FormDescription>
-                        List the key parameters sent in the API request URL or body. Leave blank if none.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              {currentStep === 5 && (
-                <FormField
-                  control={form.control}
-                  name="backendDatabaseConnection"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-lg font-medium">Backend & Database Connection</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="e.g., Node.js backend connects to a PostgreSQL database on AWS RDS using Prisma ORM."
-                          className="min-h-[100px]"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Describe how the backend system retrieves data from the database, including technologies or services used.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              <div className="flex justify-between pt-4">
-                <Button type="button" variant="outline" onClick={prevStep} disabled={currentStep === 1 || isLoading}>
-                  Previous
-                </Button>
-                <Button type="button" onClick={nextStep} disabled={isLoading}>
-                  {isLoading && currentStep === totalSteps ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Generating...
-                    </>
-                  ) : currentStep === totalSteps ? (
-                    "Generate Flowchart"
-                  ) : (
-                    "Next"
-                  )}
-                </Button>
-              </div>
-            </form>
-          </Form>
+          </ScrollArea>
         </CardContent>
+         <CardFooter className="p-4 border-t">
+            <form onSubmit={handleSendMessage} className="flex w-full items-center space-x-2">
+                <Textarea
+                value={userInput}
+                onChange={(e) => setUserInput(e.target.value)}
+                placeholder={isComplete ? "Flowchart generated. Start a new chat if needed." : "Type your message here..."}
+                className="flex-1 resize-none min-h-[40px] max-h-[150px]"
+                rows={1}
+                onKeyDown={handleKeyDown}
+                disabled={isLoading || isComplete}
+                aria-label="Chat input"
+                />
+                <Button type="submit" size="icon" disabled={isLoading || !userInput.trim() || isComplete}>
+                    <Send className="h-4 w-4" />
+                    <span className="sr-only">Send message</span>
+                </Button>
+            </form>
+        </CardFooter>
       </Card>
 
-      {isLoading && currentStep === totalSteps && (
-        <div className="flex justify-center items-center py-8">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="ml-2 text-muted-foreground">Generating your flowchart...</p>
+      {flowchartDefinition && (
+        <div ref={flowchartRef} className="pb-8">
+          <Card className="bg-card shadow-lg rounded-lg mt-8">
+            <CardHeader>
+              <CardTitle className="text-xl font-semibold text-primary">Generated Flowchart</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <MermaidChart chartDefinition={flowchartDefinition} />
+            </CardContent>
+          </Card>
         </div>
-      )}
-
-      {flowchartData && flowchartData.flowchartDefinition && (
-         <div ref={flowchartRef}>
-            <Card className="bg-card shadow-lg rounded-lg mt-8">
-                <CardHeader>
-                <CardTitle className="text-xl font-semibold text-primary">Generated Flowchart</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <MermaidChart chartDefinition={flowchartData.flowchartDefinition} />
-                </CardContent>
-            </Card>
-         </div>
       )}
     </div>
   );

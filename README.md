@@ -1,4 +1,4 @@
-# Firebase Studio
+# TEKURA
 
 Tekura turns your user flows or feature descriptions into real-time architecture diagrams with technical questions and suggestions. Spend less time planning and even less time building.
 

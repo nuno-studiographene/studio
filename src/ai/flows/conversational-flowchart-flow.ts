@@ -58,8 +58,13 @@ const flowchartPrompt = ai.definePrompt({
     - If critical information is missing, respond with \`type: 'question'\` and the clarifying question in the \`content\` field.
     - Once you are confident you have gathered *all* necessary details (including user flow, fetching method, loading state, API details if applicable, backend/DB info), STOP asking questions.
     - Generate the final flowchart definition in valid Mermaid syntax. The definition MUST start with \`flowchart TD\`.
-    - **IMPORTANT: Ensure node labels are concise and enclosed in appropriate brackets (e.g., \`A[Descriptive Label]\`, \`B(Decision Point)\`). Avoid using complex punctuation like commas, parentheses, or special characters *inside* the labels themselves, as this can break the flowchart rendering. Use simple descriptions within the labels.**
-    - Respond with \`type: 'flowchart'\` and the complete, valid Mermaid flowchart definition in the \`content\` field. Ensure the entire output is valid Mermaid syntax and follows best practices (clear node IDs, concise labels, standard shapes). Do NOT include any explanations or markdown fences (like \`\`\`) around the Mermaid code in the final flowchart output.
+    - **Mermaid Syntax Rules:**
+        - Use standard shapes: \`NodeID[Description]\` for rectangles, \`NodeID(Round Edges)\` for rounded rectangles, \`NodeID{{Database}}\` for databases, \`NodeID>Decision]\` for rhombus (decision), etc.
+        - **IMPORTANT: Ensure node labels are concise and enclosed in appropriate brackets (e.g., \`A[Descriptive Label]\`, \`B(Decision Point)\`). Avoid using complex punctuation like commas, parentheses, semicolons, or special characters *inside* the node labels themselves, as this can break rendering.**
+        - Define links between nodes using \`-->\` for arrows. Example: \`A --> B\`.
+        - Each link definition (like \`A --> B\`) MUST end with a semicolon (\`;\`). Example: \`A --> B;\`.
+        - **CRITICAL: Do NOT place semicolons directly after a node definition's closing bracket/parenthesis (e.g., NEVER do \`A[Label];\`). Semicolons ONLY belong at the end of a complete link definition.**
+    - Respond with \`type: 'flowchart'\` and the complete, valid Mermaid flowchart definition in the \`content\` field. Ensure the entire output is valid Mermaid syntax and follows best practices. Do NOT include any explanations or markdown fences (like \`\`\`) around the Mermaid code in the final flowchart output.
 
     **Example Interaction:**
     User: "Show related products on the product page."
@@ -67,7 +72,7 @@ const flowchartPrompt = ai.definePrompt({
     User: "It uses an API call."
     Assistant (output): \`{ type: 'question', content: 'Got it. What is the endpoint URL for the related products API, and is it a GET or POST request?' }\`
     ... (continue until all info is gathered) ...
-    Assistant (final output): \`{ type: 'flowchart', content: 'flowchart TD\\nA[User visits Product Page] --> B(Frontend makes GET request to /api/products/id/related);\\nB --> C{Show Loading Skeleton};\\nC --> D[API Gateway];\\nD --> E[Backend Service Fetches Data];\\nE --> F((Database Query));\\nF --> E;\\nE --> G[API Gateway Returns Data];\\nG --> H(Frontend receives data);\\nH --> I[Update UI with Related Products];\\nC --> H;' }\`
+    Assistant (final output): \`{ type: 'flowchart', content: 'flowchart TD\\nA[User visits Product Page] --> B(Frontend makes GET request to /api/products/id/related);\\nB --> C{Show Loading Skeleton};\\nC --> D[API Gateway];\\nD --> E[Backend Service Fetches Data];\\nE --> F{{Database Query}};\\nF --> E;\\nE --> G[API Gateway Returns Data];\\nG --> H(Frontend receives data);\\nH --> I[Update UI with Related Products];\\nC --> H;' }\`
 
     **Current Conversation:**
     {{#each messages}}
@@ -106,6 +111,7 @@ const conversationalFlowchartFlow = ai.defineFlow<
             definition = definition.replace(/\s*```$/, '');
             definition = definition.trim();
 
+            // Ensure it starts with 'flowchart TD'
             if (!definition.startsWith('flowchart TD')) {
                 console.warn("Generated flowchart definition doesn't start with 'flowchart TD'. Attempting to fix.");
                  // Basic check if it looks like Mermaid content but lacks the header
@@ -117,25 +123,36 @@ const conversationalFlowchartFlow = ai.defineFlow<
                     return { type: 'error', content: 'I seem to have trouble generating the flowchart structure correctly. Could you perhaps rephrase the last piece of information?' };
                  }
             }
-             // Mermaid can be strict about labels. While the prompt guides the LLM,
-             // we can add a basic sanitizer here as a fallback for common issues,
-             // like extra quotes or complex chars inside labels that the LLM might still generate.
-             // This is a simple example; more robust parsing/sanitizing is complex.
-             // Example: Replace potentially problematic characters inside labels []
-             definition = definition.replace(/\[(.*?)\]/g, (match, label) => {
-                // Remove internal quotes, parentheses, commas for simplicity
-                const sanitizedLabel = label.replace(/["'(),]/g, '');
-                return `[${sanitizedLabel}]`;
+
+             // Sanitize node labels: Remove problematic characters *inside* brackets/parens/braces
+             definition = definition.replace(/([\[({>])(.*?)([\])}])/g, (match, openBracket, label, closeBracket) => {
+                 // Remove internal quotes, parentheses, commas, semicolons for simplicity
+                 const sanitizedLabel = label.replace(/["'(),;]/g, '');
+                 // Ensure label doesn't exceed a reasonable length (e.g., 100 chars) to prevent issues
+                 const truncatedLabel = sanitizedLabel.substring(0, 100);
+                 return `${openBracket}${truncatedLabel}${closeBracket}`;
              });
-              // Example: Do the same for other bracket types if needed, e.g., () {}
-             definition = definition.replace(/\((.*?)\)/g, (match, label) => {
-                const sanitizedLabel = label.replace(/["'(),]/g, '');
-                return `(${sanitizedLabel})`;
-             });
-              definition = definition.replace(/\{(.*?)\}/g, (match, label) => {
-                const sanitizedLabel = label.replace(/["'(),]/g, '');
-                return `{${sanitizedLabel}}`;
-             });
+
+            // NEW: Remove semicolons directly after closing brackets/parens/braces
+            // This regex looks for ], ), }, >] followed by optional whitespace and then a semicolon, and removes the semicolon.
+            definition = definition.replace(/([\]\)\}>]\s*);/g, '$1');
+
+            // Ensure all lines (link definitions) end with a semicolon, except the first line ('flowchart TD')
+            const lines = definition.split('\n');
+            definition = lines.map((line, index) => {
+                const trimmedLine = line.trim();
+                if (index === 0 || trimmedLine === '' || trimmedLine.endsWith(';')) {
+                    return line; // Keep first line, empty lines, and lines already ending with ;
+                }
+                // Add semicolon if it's a link definition (heuristic: contains -> or ---) and doesn't already end with one
+                if (trimmedLine.includes('-->') || trimmedLine.includes('---')) {
+                     // Check again if it *really* doesn't end with ;, considering potential trailing whitespace removed by trim()
+                     if (!line.trim().endsWith(';')) {
+                         return line + ';';
+                     }
+                }
+                return line; // Return line as is if it's not a link or already has a semicolon
+            }).join('\n');
 
 
             output.content = definition;

@@ -59,37 +59,39 @@ const flowchartPrompt = ai.definePrompt({
     - If critical information is missing, respond with \`type: 'question'\` and the clarifying question in the \`content\` field.
     - Once you are confident you have gathered *all* necessary details (user flow, fetching, loading, API details, backend, DB, error handling, UI result), STOP asking questions.
     - Generate the final flowchart definition in valid Mermaid syntax. The definition MUST start with \`flowchart TD\`.
-    - **Mermaid Syntax Rules:**
-        - Use standard shapes: \`NodeID["Description"]\` for rectangles (use quotes for labels with spaces/special chars), \`NodeID("Rounded Edges")\` for rounded rectangles, \`NodeID{{"Database Symbol"}} \` for databases, \`NodeID{"Decision Point?"}\` for rhombus (decision).
-        - **IMPORTANT:** Ensure node labels are concise and enclosed in appropriate quotes or brackets/parentheses if simple. Quotes (\`"..."\`) are generally safer for labels containing spaces, punctuation, or special characters. Example: \`A["User Clicks Button"]\`, \`B("Process Data")\`.
-        - **CRITICAL FOR NODE IDs:** Node IDs (the part before the brackets/quotes, e.g., 'A', 'B', 'fetchData') MUST NOT contain spaces or special characters other than underscores. Use simple IDs like \`fetchData\` or \`HandleError\`.
+    - **Mermaid Syntax Rules (Strict):**
+        - Use standard shapes: \`NodeID["Label with spaces/chars"]\`, \`NodeID(Rounded)\`, \`NodeID{{"DB Symbol"}}\`, \`NodeID{"Decision?"}\`.
+        - **CRITICAL FOR NODE IDs:** Node IDs (e.g., 'A', 'B', 'fetchData') MUST consist ONLY of letters, numbers, and underscores. NO spaces or other special characters are allowed in Node IDs. Use simple IDs like \`FetchData\` or \`Handle_Error\`.
+        - **CRITICAL FOR LABELS:** Node labels MUST be enclosed in quotes (\`"..."\`) if they contain spaces, punctuation (like \`()[]{}:;/\`), or special characters. Simple single-word labels can use parentheses \`()\`, but quotes are safer. Example: \`A["User Clicks Submit Button"]\`, \`B("Process")\`, \`C{{"DB Symbol"}}\`. Double-check quoting for complex labels.
         - Define links between nodes using \`-->\`. Example: \`A --> B\`.
         - Add labels to links where appropriate using \`-- text -->\`. Example: \`B -- GET /api/data --> C\`.
-        - Each link definition (like \`A --> B\` or \`B -- text --> C\`) MUST end with a semicolon (\`;\`). Example: \`A --> B;\`, \`B -- GET /api/data --> C;\`.
-        - **CRITICAL: Do NOT place semicolons directly after a node definition's closing bracket/parenthesis/quote (e.g., NEVER do \`A["Label"];\`). Semicolons ONLY belong at the end of a complete link definition.**
-    - Respond with \`type: 'flowchart'\` and the complete, valid Mermaid flowchart definition in the \`content\` field. Ensure the entire output is valid Mermaid syntax and follows best practices. Do NOT include any explanations or markdown fences (like \`\`\`) around the Mermaid code in the final flowchart output.
+        - **ABSOLUTELY CRITICAL SEMICOLON RULE:** A semicolon (\`;\`) MUST ONLY appear at the very end of a complete link definition line (e.g., \`A --> B;\` or \`B -- Success --> C;\`).
+        - **NEVER, EVER place a semicolon directly after a node definition's closing bracket/parenthesis/quote.** Incorrect: \`A["Label"];\`. Correct: \`A["Label"] --> B;\`.
+        - Each line defining a node-to-node link MUST end with a semicolon. The first line (\`flowchart TD\`) does not need one. Node definition lines (like \`A["Label"]\`) should NOT end with a semicolon.
+    - Respond with \`type: 'flowchart'\` and the complete, valid Mermaid flowchart definition in the \`content\` field. Ensure the entire output adheres strictly to the Mermaid syntax rules above. Do NOT include any explanations or markdown fences (like \`\`\`) around the Mermaid code in the final flowchart output.
 
     **Example Interaction:**
     User: "Show related products on the product page."
     Assistant (output): \`{ type: 'question', content: 'Okay, how are the related products fetched? Is it via an API call from the frontend or rendered on the server (SSR)?' }\`
     User: "It uses an API call."
     Assistant (output): \`{ type: 'question', content: 'Got it. What is the HTTP method (GET, POST, etc.) and the endpoint URL for the related products API?' }\`
-    User: "GET /api/products/123/related"
+    User: "GET /api/products/{id}/related"
     Assistant (output): \`{ type: 'question', content: 'Thanks! How is the loading state indicated to the user while the API call is in progress?' }\`
     User: "A skeleton loader."
     Assistant (output): \`{ type: 'question', content: 'Understood. What happens on the backend when it receives this request? Does it interact with a database?' }\`
     User: "Yes, the Node.js backend queries a PostgreSQL DB using Prisma."
     Assistant (output): \`{ type: 'question', content: 'Excellent. And finally, how is an error handled if the API call fails?' }\`
     User: "Show a toast message 'Failed to load related products'."
-    Assistant (final output): \`{ type: 'flowchart', content: 'flowchart TD\\nA["User visits Product Page"] --> B{Make API Call};\\nB -- GET /api/products/123/related --> C["Show Skeleton Loader"];\\nB --> D[Backend: Node.js/Prisma];\\nD --> E{{"DB: PostgreSQL Query"}};\\nE --> D;\\nD --> F[API Response];\\nF -- Success --> G["Hide Skeleton, Display Products"];\\nC --> G;\\nF -- Error --> H["Show Error Toast"];\\nC --> H;' }\`
+    Assistant (final output): \`{ type: 'flowchart', content: 'flowchart TD\\nA["User visits Product Page"] --> B{Make API Call?};\\nB -- Yes --> C["Show Skeleton Loader"];\\nC --> D[API Call: GET /api/products/{id}/related];\\nD --> E[Backend: Node.js/Prisma];\\nE --> F{{"DB: PostgreSQL Query"}};\\nF -- Success --> G[API Success Response];\\nF -- Failure --> H[API Error Response];\\nE --> G;\\nE --> H;\\nG --> I["Hide Skeleton, Display Products"];\\nH --> J["Show Error Toast"];\\nC --> I;\\nC --> J;\\nB -- No --> K[Render Page without related];' }\`
 
     **Current Conversation:**
     {{#each messages}}
     {{role}}: {{{content}}}
     {{/each}}
 
-    Analyze the history and decide: Ask the next question OR generate the flowchart.`,
+    Analyze the history and decide: Ask the next question OR generate the flowchart based on the STRICT rules.`,
 });
+
 
 const conversationalFlowchartFlow = ai.defineFlow<
   typeof ConversationInputSchema,
@@ -101,7 +103,7 @@ const conversationalFlowchartFlow = ai.defineFlow<
     outputSchema: ConversationOutputSchema,
   },
   async (input) => {
-    console.log('Conversational Flow Input:', input);
+    console.log('Conversational Flow Input:', JSON.stringify(input, null, 2));
     try {
         // **NEW: Validate input**
         if (!input || typeof input !== 'object') {
@@ -109,23 +111,17 @@ const conversationalFlowchartFlow = ai.defineFlow<
             return { type: 'error', content: 'Invalid input format. Please try again.' };
         }
 
-        if (!input.messages || !Array.isArray(input.messages)) {
-            console.error('Invalid input: Messages is not an array.');
-            return { type: 'error', content: 'Invalid input format: Missing conversation messages. Please try again.' };
+        if (!input.messages || !Array.isArray(input.messages) || input.messages.length === 0) {
+            console.error('Invalid input: Messages is not a non-empty array.');
+            return { type: 'error', content: 'Invalid input format: Missing or empty conversation messages. Please try again.' };
         }
 
-        // Check structure of each message in array (optional, but recommended)
+        // Basic check structure of each message in array
         for (const message of input.messages) {
-            if (!message || typeof message !== 'object' || typeof message.role !== 'string' || typeof message.content !== 'string') {
-                console.error('Invalid input: Message is malformed:', message);
-                return { type: 'error', content: 'Invalid input format: Malformed message in conversation. Please try again.' };
+             if (!message || typeof message !== 'object' || typeof message.role !== 'string' || typeof message.content !== 'string' || !['user', 'assistant'].includes(message.role)) {
+                console.error('Invalid input: Message is malformed or has invalid role:', message);
+                return { type: 'error', content: `Invalid input format: Malformed message or invalid role ('${message.role}') in conversation. Please try again.` };
             }
-             // Basic check for known roles
-             if (message.role !== 'user' && message.role !== 'assistant') {
-                 console.warn('Warning: Unknown role in message:', message.role);
-                 // Decide if this is an error or just a warning
-                 // return { type: 'error', content: `Invalid input format: Unknown role '${message.role}' in conversation.` };
-             }
         }
 
 
@@ -143,7 +139,7 @@ const conversationalFlowchartFlow = ai.defineFlow<
         if (output.type === 'flowchart') {
             let definition = output.content.trim();
             // Remove potential markdown fences sometimes added by the LLM
-            definition = definition.replace(/^```mermaid\s*/i, ''); // Case-insensitive mermaid tag
+            definition = definition.replace(/^```(?:mermaid)?\s*/i, ''); // Optional mermaid tag
             definition = definition.replace(/\s*```$/, '');
             definition = definition.trim();
 
@@ -152,7 +148,6 @@ const conversationalFlowchartFlow = ai.defineFlow<
                 console.warn("Generated flowchart definition doesn't start with 'flowchart TD' or 'graph TD'. Attempting to fix.");
                  // Basic check if it looks like Mermaid content but lacks the header
                  if (definition.includes('-->') || definition.includes('---')) {
-                     // Default to flowchart TD if missing
                      definition = 'flowchart TD\n' + definition;
                  } else {
                      console.error("Generated content doesn't look like a valid Mermaid flowchart:", definition);
@@ -161,71 +156,96 @@ const conversationalFlowchartFlow = ai.defineFlow<
                  }
             }
 
-             // Sanitize node labels: Ensure quotes for complex labels, simplify IDs
-             definition = definition.replace(
-                /(\w+)(\[|\(|\{|")(.*?)(\]|\)|\}|"|\})/g,
-                (match, id, openBracket, label, closeBracket) => {
-                    // Simplify ID: remove problematic characters if any (should be handled by LLM prompt ideally)
-                    const sanitizedId = id.replace(/[^a-zA-Z0-9_]/g, '_');
-
-                    // Ensure label is properly quoted if it contains problematic characters or spaces
-                    // Basic check: if label contains spaces, quotes, common punctuation -> use quotes
-                    let sanitizedLabel = label.replace(/"/g, "'"); // Escape internal double quotes
-                    if (/[ "(),;{}<>]/ .test(sanitizedLabel) && openBracket !== '"') {
-                        // If it needs quotes but doesn't have them, add them
-                        return `${sanitizedId}["${sanitizedLabel}"]`;
-                    } else if (openBracket === '"') {
-                         // If it already has quotes, just ensure ID is sanitized
-                         return `${sanitizedId}["${sanitizedLabel}"]`;
-                    } else {
-                         // If simple label in simple brackets, keep it but sanitize ID
-                         // Remove internal problematic chars just in case
-                         sanitizedLabel = sanitizedLabel.replace(/["'(),;]/g, '');
-                         return `${sanitizedId}${openBracket}${sanitizedLabel.substring(0, 100)}${closeBracket}`;
-                    }
+            // Attempt to sanitize Node IDs (remove disallowed characters) - Best effort
+            definition = definition.replace(/^(\s*)(\w+)(?=\[|\(|\{)/gm, (match, prefix, id) => {
+                const sanitizedId = id.replace(/[^a-zA-Z0-9_]/g, '_');
+                if (id !== sanitizedId) {
+                    console.warn(`Sanitized Node ID: '${id}' -> '${sanitizedId}'`);
                 }
-             );
+                return prefix + sanitizedId;
+            });
+
+             // Ensure proper quoting for labels with spaces/symbols, handle escaped quotes
+             definition = definition.replace(/(\w+)(\[|\(|\{)(.*?)(\]|\)|\})/g, (match, id, openBracket, label, closeBracket) => {
+                 const sanitizedId = id.replace(/[^a-zA-Z0-9_]/g, '_'); // Ensure ID is clean again
+                 let sanitizedLabel = label;
+
+                // If the label contains problematic characters or spaces, ensure it uses double quotes ""
+                 // Problematic chars: space, "()[]{};/<>|!@#$%^&*+=`~
+                 if (/[ "()[\]{};\/<>|!@#$%^&*+=`~]/.test(sanitizedLabel) || openBracket !== '"') {
+                     // Escape existing double quotes within the label before wrapping
+                     sanitizedLabel = sanitizedLabel.replace(/"/g, '#quot;'); // Use HTML entity temporarily if needed, or specific marker
+                     return `${sanitizedId}["${sanitizedLabel}"]`;
+                 } else if (openBracket === '"') {
+                     // Already has quotes, just ensure ID is sanitized and maybe escape internal quotes
+                      sanitizedLabel = sanitizedLabel.replace(/"/g, '#quot;');
+                      return `${sanitizedId}["${sanitizedLabel}"]`;
+                 } else {
+                    // Simple label in simple brackets like (Process) - keep as is, but sanitize ID
+                    return `${sanitizedId}${openBracket}${sanitizedLabel}${closeBracket}`;
+                 }
+             });
 
 
-            // Remove semicolons directly after closing brackets/parens/braces/quotes
-            // Looks for ], ), }, "] followed by optional whitespace and then a semicolon, removes the semicolon.
+            // Remove semicolons directly after closing brackets/parens/braces/quotes of node definitions
+            // Looks for ], ), }, " followed by optional whitespace and then a semicolon, removes the semicolon.
+            // IMPORTANT: Do this BEFORE ensuring links end with semicolons.
             definition = definition.replace(/([\]\)\}"']\s*);/g, '$1');
 
-            // Ensure all link definition lines end with a semicolon, except the first line ('flowchart TD')
+            // Ensure all actual link definition lines end with a semicolon, except the first line ('flowchart TD')
             const lines = definition.split('\n');
             definition = lines.map((line, index) => {
                 const trimmedLine = line.trim();
-                if (index === 0 || trimmedLine === '' || trimmedLine.endsWith(';')) {
-                    return line; // Keep first line, empty lines, and lines already ending with ;
+                // Ignore first line, empty lines, comments, and lines already ending correctly
+                 if (index === 0 || trimmedLine === '' || trimmedLine.startsWith('%%') || trimmedLine.endsWith(';')) {
+                    return line;
                 }
-                // Add semicolon if it's a link definition (heuristic: contains -> or ---) and doesn't already end with one
-                 // Also check it's not just a node definition line
-                 if ((trimmedLine.includes('-->') || trimmedLine.includes('---')) && !/^\s*\w+[\[({"].*?[\])}"]\s*$/.test(trimmedLine)) {
-                     // Check again if it *really* doesn't end with ;, considering potential trailing whitespace removed by trim()
-                     if (!line.trim().endsWith(';')) {
-                         return line + ';';
-                     }
+
+                // Check if it's a link definition (contains -> or ---)
+                // AND is NOT just a node definition (e.g., `A["Label"]` or `B(Simple)`)
+                 const isLink = /-->|---/.test(trimmedLine);
+                 // Stricter check for node def: starts with node ID, optional brackets/parens/etc., optional label, ends with the closing bracket/paren/etc.
+                 const isStrictNodeDef = /^\s*[a-zA-Z0-9_]+\s*(?:\[.*?\]|\(.*?\)|{.*?}|\w+)\s*$/.test(trimmedLine);
+
+
+                if (isLink && !isStrictNodeDef) {
+                    // It looks like a link and not just a node definition, add semicolon if missing.
+                     return line.trimRight() + ';'; // Trim trailing whitespace before adding
                 }
-                return line; // Return line as is if it's not a link or already has a semicolon
+
+                // Otherwise, return the line as is (likely a node definition or malformed)
+                return line;
             }).join('\n');
 
 
             output.content = definition;
-            console.log('Cleaned Flowchart Definition:', definition);
+            console.log('Cleaned Flowchart Definition:\n', definition); // Log with newline for readability
+        } else if (output.type === 'error') {
+             console.error("Flow returned an error type:", output.content);
+             // Ensure the error content is passed through
+             return output; // Return the error object as received
+        } else if (output.type === 'question') {
+            // Pass the question through
+             return output;
         }
 
+
         return output;
+
     } catch (error: unknown) { // Explicitly type error as unknown
       // Log the full error object for better debugging
-      console.error('Error in conversationalFlowchartFlow:', error);
+      console.error('Error in conversationalFlowchartFlow catch block:', error);
 
       // Construct a user-friendly message, potentially including limited error info if safe
       let errorMessage = 'An unexpected error occurred while processing your request.';
       if (error instanceof Error) {
         // You might want to be cautious about exposing specific error messages to the client
         // depending on your security requirements.
-        // errorMessage += ` Details: ${error.message}`; // Example: Include message
+        // Example: Include message if needed, but usually avoid exposing internal details
+        // errorMessage += ` Details: ${error.message}`;
         console.error("Error details:", error.message, error.stack); // Log stack trace server-side
+      } else {
+        console.error("Caught non-Error object:", error);
       }
       errorMessage += ' Please check the server logs or try again later.';
 

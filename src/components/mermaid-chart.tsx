@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
-import mermaid from 'mermaid';
+import mermaid, { type MermaidConfig } from 'mermaid';
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -13,6 +13,25 @@ interface MermaidChartProps {
   chartDefinition: string;
 }
 
+// Helper function to get computed style HSL values
+const getResolvedColor = (variableName: string): string | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(variableName)?.trim();
+  // Basic check if it looks like HSL (more robust validation could be added)
+  if (value && value.startsWith('hsl')) {
+    return value;
+  }
+  // Attempt to convert hex/rgb if needed, or return default. For now, expect HSL.
+   console.warn(`Could not resolve CSS variable ${variableName} to HSL format. Received: ${value}`);
+   // Return a default/fallback color or undefined
+   if (variableName.includes('background')) return 'hsl(0 0% 98%)'; // light background
+   if (variableName.includes('foreground')) return 'hsl(0 0% 3.9%)'; // dark text
+   if (variableName.includes('secondary')) return 'hsl(0 0% 94%)'; // light grey
+   if (variableName.includes('border')) return 'hsl(0 0% 89.8%)'; // default border
+  return undefined;
+};
+
+
 export const MermaidChart: React.FC<MermaidChartProps> = ({ chartDefinition }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [svgContent, setSvgContent] = useState<string | null>(null);
@@ -22,38 +41,55 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chartDefinition }) =
   const mermaidInitialized = useRef(false); // Track initialization
 
   useEffect(() => {
-    // Initialize Mermaid only once on the client
+    // Initialize Mermaid only once on the client, after styles are computed
     if (typeof window !== 'undefined' && !mermaidInitialized.current) {
         try {
-            mermaid.initialize({
+            const themeVariables: MermaidConfig['themeVariables'] = {
+                // Resolve CSS variables to actual HSL values
+                background: getResolvedColor('--background') || 'hsl(0 0% 98%)', // Provide fallback
+                primaryColor: getResolvedColor('--secondary') || 'hsl(0 0% 94%)', // Node background
+                primaryTextColor: getResolvedColor('--secondary-foreground') || 'hsl(0 0% 9%)', // Node text
+                lineColor: getResolvedColor('--foreground') || 'hsl(0 0% 3.9%)', // Arrow lines
+                textColor: getResolvedColor('--foreground') || 'hsl(0 0% 3.9%)', // General text outside nodes
+                primaryBorderColor: getResolvedColor('--border') || 'hsl(0 0% 89.8%)', // Node border
+                arrowheadColor: getResolvedColor('--foreground') || 'hsl(0 0% 3.9%)', // Ensure arrowheads match line color
+                // Add other variables as needed, resolving them similarly
+            };
+
+            // Log resolved variables for debugging
+            // console.log("Resolved Mermaid Theme Variables:", themeVariables);
+
+            const config: MermaidConfig = {
                 startOnLoad: false,
-                theme: 'base', // Using 'base' theme for better CSS var compatibility
-                 themeVariables: {
-                    background: 'hsl(var(--background))',
-                    primaryColor: 'hsl(var(--secondary))', // Node background
-                    primaryTextColor: 'hsl(var(--secondary-foreground))', // Node text
-                    lineColor: 'hsl(var(--foreground))', // Arrow lines
-                    textColor: 'hsl(var(--foreground))', // General text outside nodes
-                    primaryBorderColor: 'hsl(var(--border))', // Node border
-                    // Ensure arrowheads match line color for consistency
-                    arrowheadColor: 'hsl(var(--foreground))',
-                }
-            });
+                theme: 'base', // Use 'base' which works well with themeVariables
+                themeVariables: themeVariables
+            };
+
+            mermaid.initialize(config);
             mermaidInitialized.current = true;
         } catch (e) {
             console.error("Failed to initialize Mermaid", e);
-            setError("Failed to initialize the flowchart renderer.");
+            setError(`Failed to initialize the flowchart renderer: ${e instanceof Error ? e.message : String(e)}`);
             setIsLoading(false);
         }
     }
-  }, []);
+  }, []); // Empty dependency array ensures this runs once on mount
+
 
  useEffect(() => {
     if (!mermaidInitialized.current) {
-        // Don't proceed if mermaid hasn't initialized
         // Set loading true until initialization effect runs
         setIsLoading(true);
-        return;
+        // Poll for initialization if needed, or rely on state update triggering re-render
+         const checkInit = setInterval(() => {
+             if (mermaidInitialized.current) {
+                 clearInterval(checkInit);
+                 // Trigger re-render or directly call rendering logic if needed
+                 // For now, relying on the state change from the init effect
+             }
+         }, 100);
+         return () => clearInterval(checkInit);
+        // return; // Don't proceed if mermaid hasn't initialized
     }
 
     if (chartDefinition && containerRef.current) {
@@ -67,7 +103,8 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chartDefinition }) =
              if (typeof mermaid.parse !== 'function') {
                  throw new Error("Mermaid 'parse' function not available.");
              }
-             mermaid.parse(chartDefinition); // Throws error on invalid syntax
+             // Use a dummy element for parsing check if needed, or rely on render's error handling
+             // await mermaid.parse(chartDefinition); // Throws error on invalid syntax
         } catch (parseError: any) {
             console.error("Mermaid parse error:", parseError);
             setError(`Invalid flowchart syntax: ${parseError?.str || parseError?.message || 'Unknown parsing error'}`);
@@ -82,8 +119,17 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chartDefinition }) =
             if (typeof mermaid.render !== 'function') {
                 throw new Error("Mermaid 'render' function not available.");
             }
-            const { svg } = await mermaid.render(chartId, chartDefinition);
+            // Added basic validation check within render try-catch
+            const { svg, bindFunctions } = await mermaid.render(chartId, chartDefinition);
             setSvgContent(svg);
+            if (bindFunctions) {
+                 // Ensure containerRef.current exists before calling bindFunctions
+                if (containerRef.current) {
+                    bindFunctions(containerRef.current);
+                } else {
+                     console.warn("Mermaid container ref not available for binding functions.");
+                }
+            }
             setError(null);
           } catch (renderError: any) {
             console.error("Mermaid render error:", renderError);
@@ -108,7 +154,7 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chartDefinition }) =
          }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chartDefinition, chartId]); // Rerun when definition or ID changes
+  }, [chartDefinition, chartId, mermaidInitialized.current]); // Rerun when definition, ID, or initialization status changes
 
 
   return (
@@ -125,7 +171,8 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chartDefinition }) =
         {error && <div className="text-destructive p-4 border border-destructive rounded-md bg-destructive/10">{error}</div>}
         {/* Render the SVG using dangerouslySetInnerHTML */}
         {!isLoading && svgContent && !error && (
-          <div dangerouslySetInnerHTML={{ __html: svgContent }} className="mermaid-container [&>svg]:max-w-full [&>svg]:h-auto flex justify-center"/>
+          // Added key prop to force re-render when svgContent changes, which might help with updates
+          <div key={svgContent} dangerouslySetInnerHTML={{ __html: svgContent }} className="mermaid-container [&>svg]:max-w-full [&>svg]:h-auto flex justify-center"/>
         )}
          {/* Fallback message if rendering fails silently or definition is empty */}
         {!isLoading && !svgContent && !error && !chartDefinition && (
@@ -139,3 +186,5 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chartDefinition }) =
     </Card>
   );
 };
+
+    
